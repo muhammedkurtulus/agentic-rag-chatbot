@@ -1,0 +1,10 @@
+qdrant-client
+streamlit 
+python-dotenv
+langchain
+crewai
+langchain_community
+langchain_ollama
+pdfplumber
+pydantic
+ollama
