@@ -171,7 +171,27 @@ def process_query(user_input):
 
         # Proceed only if not a greeting that has been fully handled
         if result["routing"] != "greeting":
-            # 2. Tool Routing step (only if not a greeting)
+            # 2. Query Simplification step (before routing, for better similarity matching)
+            simplified_query = user_input
+            try:
+                simplifier_crew = Crew(
+                    agents=[query_simplifier_agent],
+                    tasks=[query_simplifier_task],
+                    verbose=True,
+                    process=Process.sequential,
+                )
+                simplified_output = simplifier_crew.kickoff(inputs={"query": user_input})
+                simplified_query = str(simplified_output).strip()
+                print(f"🔍 Simplified Query: {simplified_query}")
+                
+                # Use the simplified query for routing and vector search
+                if simplified_query:
+                    user_input = simplified_query
+            except Exception as e:
+                print(f"Error during query simplification: {str(e)}. Using original query.")
+                # Continue with original query if simplification fails
+
+            # 3. Tool Routing step (only if not a greeting)
             try:
                 # Call the undecorated Python function directly
                 routing_decision = _get_similarity_routing_decision(user_input)
@@ -187,7 +207,7 @@ def process_query(user_input):
                     "combined_search"  # Default to combined search on error
                 )
 
-            # 3. Rewrite step
+            # 4. Rewrite step
             try:
                 result["rewritten"] = rewrite_query(user_input, result["routing"])
                 print(f"✏️ Rewritten Query: {result['rewritten']}")
@@ -195,7 +215,7 @@ def process_query(user_input):
                 print(f"Error during rewriting: {str(e)}")
                 result["rewritten"] = user_input  # Use original query on error
 
-            # 4. Retrieve step
+            # 5. Retrieve step
             try:
                 result["retrieved"] = retrieve_information(
                     result["rewritten"], result["routing"]
@@ -207,7 +227,7 @@ def process_query(user_input):
                     "Unable to retrieve information. Please try again with a different query."
                 )
 
-            # 5. Evaluate step
+            # 6. Evaluate step
             try:
                 result["evaluation"] = evaluate_results(
                     result["rewritten"], result["retrieved"]
@@ -615,6 +635,23 @@ evaluator_agent = Agent(
 )
 
 
+# Query Simplifier Agent
+query_simplifier_agent = Agent(
+    role="Query Simplifier",
+    goal="Extract the core question or main keywords from the user's query, removing greetings, politeness phrases, and conversational filler. Focus on the essential topic.",
+    backstory=(
+        """Expert in natural language understanding, specialized in identifying the core intent
+    of a user's query. Can distill complex sentences into their essential components for effective information retrieval."""
+    ),
+    llm=crewai_llm,
+    allow_delegation=False,
+    verbose=True,
+    max_retry_limit=2,
+    max_iterations=3,
+    max_execution_time=30,
+)
+
+
 # Task for Initial Query Analyzer Agent
 initial_query_analysis_task = Task(
     description=(
@@ -633,6 +670,31 @@ initial_query_analysis_task = Task(
     ),
     agent=initial_query_analyzer_agent,
     # No tools needed for this agent, relies on LLM's inherent understanding
+)
+
+
+# Task for Query Simplifier Agent
+query_simplifier_task = Task(
+    description=(
+        """Analyze the user's EXACT query: "{query}"
+    Your goal is to simplify this query for vector database search.
+    1. Identify the main topic or question.
+    2. Remove any greetings (like 'Hello', 'Hi').
+    3. Remove any politeness phrases (like 'please', 'can you tell me?', 'I would like to know').
+    4. Remove conversational filler or introductory phrases.
+    5. Extract the core keywords or reformulate it as a concise question or statement focusing *only* on the essential information needed.
+    Examples:
+        - "Hi, can you tell me about the educational background of John Doe?" -> "John Doe educational background"
+        - "Hello, what projects did Jane Smith work on?" -> "Jane Smith projects"
+        - "What is the population of London?" -> "population of London"
+        - "Tell me the current weather forecast" -> "current weather forecast"
+
+    Respond ONLY with the simplified query string. DO NOT include any other text, explanation, or labels."""
+    ),
+    expected_output=(
+        "A concise string representing the core topic or question of the original query. Example: 'John Doe educational background'"
+    ),
+    agent=query_simplifier_agent,
 )
 
 
