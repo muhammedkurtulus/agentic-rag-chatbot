@@ -19,17 +19,18 @@ import json
 
 load_dotenv()
 
-qdrant_url = os.getenv("QDRANT_URL")
-qdrant_api_key = os.getenv("QDRANT_API_KEY")
-tavily_api_key = os.getenv("TAVILY_API_KEY")
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
 
-OLLAMA_BASE_URL = "http://localhost:11434"
+VECTOR_SEARCH_LIMIT = 3 # Number of results to retrieve from vector search
 
 embedding_model = OllamaEmbeddings(model="bge-m3", base_url=OLLAMA_BASE_URL)
 
 crewai_llm = LLM(model="ollama/llama3.1", base_url=OLLAMA_BASE_URL)
 
-qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=60)
+qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
 
 
 # ----------------------------------------
@@ -248,7 +249,7 @@ def rewrite_query(query, routing):
             return query  # Return original query on error
 
 
-def get_vector_search_results(query, limit=3):
+def get_vector_search_results(query):
     """
     Retrieves the most relevant results from vector database for the given query.
 
@@ -268,7 +269,7 @@ def get_vector_search_results(query, limit=3):
     search_result = qdrant_client.search(
         collection_name=collection,
         query_vector=query_vector,
-        limit=limit,
+        limit=VECTOR_SEARCH_LIMIT,
         search_params=SearchParams(hnsw_ef=64, exact=False),
     )
 
@@ -405,9 +406,9 @@ def get_similarity_score(query):
         query_vector = embedding_model.embed_query(query)
 
         search_results = qdrant_client.search(
-            collection_name=collection, query_vector=query_vector, limit=3
+            collection_name=collection, query_vector=query_vector, limit=VECTOR_SEARCH_LIMIT
         )
-
+    
         if not search_results:
             print("No results found.")
             return 0.0
