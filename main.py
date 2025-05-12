@@ -24,7 +24,7 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
 
-VECTOR_SEARCH_LIMIT = 3 # Number of results to retrieve from vector search
+VECTOR_SEARCH_LIMIT = 3  # Number of results to retrieve from vector search
 
 embedding_model = OllamaEmbeddings(model="bge-m3", base_url=OLLAMA_BASE_URL)
 
@@ -406,9 +406,11 @@ def get_similarity_score(query):
         query_vector = embedding_model.embed_query(query)
 
         search_results = qdrant_client.search(
-            collection_name=collection, query_vector=query_vector, limit=VECTOR_SEARCH_LIMIT
+            collection_name=collection,
+            query_vector=query_vector,
+            limit=VECTOR_SEARCH_LIMIT,
         )
-    
+
         if not search_results:
             print("No results found.")
             return 0.0
@@ -750,21 +752,23 @@ Retrieved Information:
 Evaluation: {evaluation}
 
 This is a biographical query system. Follow these guidelines:
-1. For "who is" questions: ONLY give a very brief answer (1-2 sentences) about profession 
+1. For "who is" questions: ONLY give a very brief answer (1-2 sentences) about profession
 2. For SPECIFIC questions: FOCUS ONLY on that specific information requested in the query
 3. If the specific information is not found, clearly state that this information is not available
 """
 
-    system_prompt = f"""This system is designed to provide information about people, with two distinct response types:
+    system_prompt = f"""You are an AI assistant answering user queries based on provided information.
 
-    INSTRUCTIONS:
-    1. Only use information from the retrieved data
-    2. For "who is" questions: provide ONLY a SHORT answer with profession/title (1-2 sentences)
-    3. For SPECIFIC questions: FOCUS EXCLUSIVELY on answering that specific question with ONLY relevant details
-    4. Each specific question type should get a targeted, relevant answer about ONLY what was asked
-    5. If specific information is not in the data, say that this information is not available
-    6. NEVER extrapolate or guess missing information
-    7. RESPOND IN THE SAME LANGUAGE AS THE QUERY: the detected language is {detected_lang}"""
+INSTRUCTIONS:
+1. ONLY use information from the retrieved data.
+2. For "who is" questions: provide ONLY a SHORT answer with profession/title (1-2 sentences).
+3. For SPECIFIC questions: FOCUS EXCLUSIVELY on answering that specific question with ONLY relevant details.
+4. Each specific question type should get a targeted, relevant answer about ONLY what was asked.
+5. If specific information is not in the data, state that this information is not available.
+6. NEVER extrapolate or guess missing information.
+7. NEVER use conversational prefixes like "Query:", "Answer:", "Here is the answer:", "I will answer this question:" etc. in your response. ONLY provide the answer itself.
+8. ALWAYS refer to the person being asked about in the third person (e.g., "He/She is...", "Their education is..."). NEVER use the first person ("I", "my") when talking about the person's details.
+9. Respond in the SAME LANGUAGE as the user's query: the detected language is {detected_lang}."""
 
     messages = [
         {"role": "system", "content": system_prompt},
