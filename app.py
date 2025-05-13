@@ -147,17 +147,17 @@ if user_input:
                             "content": f"Sorry, an error occurred while processing your query: {error}",
                         }
                     )
-                # Check if the query was a greeting and handled directly by process_query
-                elif routing == "greeting" and "answer" in result and result["answer"]:
+                # Check if the query was a social expression and handled directly by process_query
+                elif routing == "social" and "answer" in result and result["answer"]:
                     status_placeholder.success("✅ Answer ready!")
-                    greeting_answer = result["answer"]
-                    st.markdown(greeting_answer)
-                    print(f"💬 Greeting Answer: {greeting_answer}")
+                    social_answer = result["answer"]
+                    st.markdown(social_answer)
+                    print(f"💬 Social Expression Answer: {social_answer}")
                     st.session_state.messages.append(
-                        {"role": "assistant", "content": greeting_answer}
+                        {"role": "assistant", "content": social_answer}
                     )
                 else:
-                    # Answer step (streaming) for non-greeting queries
+                    # Answer step (streaming) for non-social expression queries
                     status_placeholder.info("💬 Streaming answer...")
                     stream_area = st.empty()
                     streamed_text = ""

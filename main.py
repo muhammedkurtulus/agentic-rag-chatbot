@@ -120,7 +120,7 @@ def process_query(user_input):
     }
 
     try:
-        # 1. Initial Query Analysis (Language and Greeting Detection)
+        # 1. Initial Query Analysis (Language and Social Expression Detection)
         try:
             analyzer_crew = Crew(
                 agents=[initial_query_analyzer_agent],
@@ -145,18 +145,18 @@ def process_query(user_input):
             result["language"] = detected_language.strip().lower()
             print(f"🔤 Detected Language: {result['language']}")
 
-            if query_type == "greeting":
-                result["routing"] = "greeting"
-                result["answer"] = analysis.get("greeting_response", "Hello! How can I help you?")
+            if query_type == "social":
+                result["routing"] = "social"
+                result["answer"] = analysis.get("social_response", "Hello! How can I help you?")
                 result["rewritten"] = user_input
-                result["retrieved"] = "greeting_response"
+                result["retrieved"] = "social_response"
                 result["evaluation"] = "yes"
                 print(
-                    f"👋 Greeting detected. Language: {result['language']}. Response: {result['answer']}. Skipping further processing."
+                    f"👋 Social expression detected. Language: {result['language']}. Response: {result['answer']}. Skipping further processing."
                 )
                 return result
             else:
-                # This is a non-greeting query, proceed to tool routing
+                # This is a non-social expression query, proceed to tool routing
                 result["routing"] = None  # To be set by tool_router_agent
 
         except Exception as e:
@@ -164,11 +164,11 @@ def process_query(user_input):
                 f"Error during initial query analysis: {str(e)}. Proceeding with defaults."
             )
             result["language"] = "en"
-            # Assume it's not a greeting and proceed to routing if analysis fails
+            # Assume it's not a social expression and proceed to routing if analysis fails
             query_type = "query"
 
-        # Proceed only if not a greeting that has been fully handled
-        if result["routing"] != "greeting":
+        # Proceed only if not a social expression that has been fully handled
+        if result["routing"] != "social":
             # 2. Query Simplification step (before routing, for better similarity matching)
             simplified_query = user_input
             try:
@@ -193,7 +193,7 @@ def process_query(user_input):
                 )
                 # Continue with original query if simplification fails
 
-            # 3. Tool Routing step (only if not a greeting)
+            # 3. Tool Routing step (only if not a social expression)
             try:
                 routing_decision = _get_similarity_routing_decision(user_input)
                 result["routing"] = (
@@ -334,9 +334,9 @@ def retrieve_information(query, routing):
     Retrieves information using the appropriate strategy based on routing decision.
     """
     try:
-        # Handle greeting case directly
-        if routing == "greeting":
-            return "greeting_response"
+        # Handle social expression case directly
+        if routing == "social":
+            return "social_response"
 
         elif routing == "vector_store":
             # First try direct vector search
@@ -572,10 +572,10 @@ vector_search_tool = search_qdrant_tool
 # Initial Query Analyzer Agent
 initial_query_analyzer_agent = Agent(
     role="Initial Query Analyzer",
-    goal="Analyze the user's query to detect its language and determine if it is a greeting. If it is a greeting, generate an appropriate greeting response in the detected language. Output the analysis as a structured JSON.",
+    goal="Analyze the user's query to detect its language and determine if it is a social expression (e.g., greeting, thanks, farewell). If it is a social expression, generate an appropriate social expression response in the detected language. Output the analysis as a structured JSON.",
     backstory=(
-        """Expert in multilingual linguistic analysis, capable of identifying greetings in various languages,
-    generating contextually appropriate greeting responses, and discerning the primary language of any text.
+        """Expert in multilingual linguistic analysis, capable of identifying social expression in various languages,
+    generating contextually appropriate social expression responses, and discerning the primary language of any text.
     Provides clear, structured output for downstream processing."""
     ),
     llm=crewai_llm,
@@ -638,7 +638,7 @@ evaluator_agent = Agent(
 # Query Simplifier Agent
 query_simplifier_agent = Agent(
     role="Query Simplifier",
-    goal="Extract the core question or main keywords from the user's query, removing greetings, politeness phrases, and conversational filler. Focus on the essential topic.",
+    goal="Extract the core question or main keywords from the user's query, removing social expressions (like 'hello', 'thanks', 'farewell'), politeness phrases, and conversational filler. Focus on the essential topic.",
     backstory=(
         """Expert in natural language understanding, specialized in identifying the core intent
     of a user's query. Can distill complex sentences into their essential components for effective information retrieval."""
@@ -660,29 +660,30 @@ initial_query_analysis_task = Task(
 
     1.  **Language Detection**: Determine the primary language of the query. Return it as a two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es'). If unsure, default to 'en'.
     2.  **Query Type Classification**:
-        *   If the ENTIRE query is SOLELY a greeting (e.g., "hello", "hi", "hey") and contains NO other question or command, classify it as "greeting".
-        *   If the query starts with a greeting but is IMMEDIATELY followed by a question or a specific topic (e.g., "Hello, what is the weather?", "Hi, tell me about John Doe?"), classify it as "query". The greeting part should be noted for language detection but the overall type is "query".
-        *   If the query does not contain a greeting or is a statement/question, classify it as "query".
+        *   If the ENTIRE query is SOLELY a social expression (e.g., "greetings", "thanks", "farewell") and contains NO other question or command, classify it as "social".
+        *   If the query starts with a social expression but is IMMEDIATELY followed by a question or a specific topic (e.g., "Thanks, who is John Doe?", "Hi, tell me about John Doe?"), classify it as "query". The social expression part should be noted for language detection but the overall type is "query".
+        *   If the query does not contain a social expression or is a statement/question, classify it as "query".
 
-    3.  **Greeting Response Generation (ONLY if type is "greeting")**:
-        *   If AND ONLY IF the query type is classified as "greeting" (meaning it's *just* a greeting), generate a concise and natural-sounding greeting response in the DETECTED language.
+    3.  **Social Expression Response Generation (ONLY if type is "social")**:
+        *   If AND ONLY IF the query type is classified as "social" (meaning it's *just* a social expression), generate a concise and natural-sounding social expression response in the DETECTED language.
         *   The response should be friendly and offer assistance. Examples:
             -   English: "Hello! How can I help you today?"
-            -   Turkish: "Merhaba! Size nasıl yardımcı olabilirim?"
-            -   Spanish: "¡Hola! ¿En qué puedo ayudarte?"
+            -   Turkish: "Başka yardımcı olabileceğim bir konu var mı?"
+            -   Spanish: "¡Adiós! Si tienes cualquier otra duda, no dudes en preguntar."
 
     Respond with ONLY a JSON string in ONE of the following formats:
-    -   If it IS SOLELY a greeting: {{"type": "greeting", "language": "language_code", "greeting_response": "Generated greeting in the detected language."}}
-        (e.g., for "Hello": {{"type": "greeting", "language": "en", "greeting_response": "Hello! How can I help you?"}})
-    -   If it IS a question/statement (even if it starts with a greeting): {{"type": "query", "language": "language_code"}}
-        (e.g., for "Hi, what's up?": {{"type": "query", "language": "en"}})
-        (e.g., for "What is the weather in London?": {{"type": "query", "language": "en"}})
+    -   If it IS SOLELY a social expression: {{"type": "social", "language": "language_code", "social_response": "Generated social expression in the detected language."}}
+        (e.g., for "Hello": {{"type": "social", "language": "en", "social_response": "Hello! How can I help you?"}})
+    -   If it IS a question/statement (even if it starts with a social expression): {{"type": "query", "language": "language_code"}}
+        (e.g., for "Hi, who is John Doe?": {{"type": "query", "language": "en"}})
+        (e.g., for "Who is John Doe?": {{"type": "query", "language": "en"}})
 
+    CRITICAL: Your output MUST be ONLY the JSON object and NOTHING else. DO NOT include any explanations, notes, or additional text before or after the JSON.
     DO NOT include any other text or explanation.
-    Focus on distinguishing between pure greetings and greetings followed by actual queries."""
+    Focus on distinguishing between pure social expressions and social expressions followed by actual queries."""
     ),
     expected_output=(
-        'A JSON string. Example for a PURE greeting: {{"type": "greeting", "language": "en", "greeting_response": "Hello! How can I assist you?"}}. Example for a query (even if it starts with a greeting): {{"type": "query", "language": "es"}}'
+        'ONLY a valid JSON string without any other text. Example for a PURE social expression: {{"type": "social", "language": "en", "social_response": "Hello! How can I assist you?"}}. Example for a query (even if it starts with a social expression): {{"type": "query", "language": "es"}}'
     ),
     agent=initial_query_analyzer_agent,
 )
@@ -694,13 +695,14 @@ query_simplifier_task = Task(
         """Analyze the user's EXACT query: "{query}"
     Your goal is to simplify this query for vector database search.
     1. Identify the main topic or question.
-    2. Remove any greetings (like 'Hello', 'Hi').
+    2. Remove any social expressions (like 'greetings', 'thanks', 'farewell').
     3. Remove any politeness phrases (like 'please', 'can you tell me?', 'I would like to know').
     4. Remove conversational filler or introductory phrases.
     5. Extract the core keywords or reformulate it as a concise question or statement focusing *only* on the essential information needed.
     Examples:
         - "Hi, can you tell me about the educational background of John Doe?" -> "John Doe educational background"
-        - "Hello, what projects did Jane Smith work on?" -> "Jane Smith projects"
+        - "Thanks, who is John Doe?" -> "John Doe"
+        - "Who is John Doe?" -> "John Doe"
         - "What is the population of London?" -> "population of London"
         - "Tell me the current weather forecast" -> "current weather forecast"
 
@@ -778,10 +780,10 @@ evaluator_task = Task(
 # 🧠 LLM
 # ----------------------------------------
 def stream_answer_from_ollama(rewritten, retrieved, evaluation, language="en"):
-    if retrieved == "greeting_response":
-        print(f"ℹ️ stream_answer_from_ollama called with retrieved='greeting_response', but an answer should have been provided by initial_query_analyzer. Using a generic fallback if no answer found in 'rewritten'.")
-        fallback_greeting = "Hello! How can I help you?"
-        yield fallback_greeting
+    if retrieved == "social_response":
+        print(f"ℹ️ stream_answer_from_ollama called with retrieved='social_response', but an answer should have been provided by initial_query_analyzer. Using a generic fallback if no answer found in 'rewritten'.")
+        fallback_social = "How can I help you?"
+        yield fallback_social
         return
 
     # Always treat partial information as useful
