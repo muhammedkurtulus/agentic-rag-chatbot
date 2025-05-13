@@ -134,65 +134,85 @@ def process_query(user_input):
 
             # Attempt to strip any markdown or extra formatting if present
             if analysis_json_str.startswith("```json"):
-                analysis_json_str = analysis_json_str.strip("```json\\n")
-                analysis_json_str = analysis_json_str.strip("\\n```")
+                analysis_json_str = analysis_json_str.strip("```json\n")
+                analysis_json_str = analysis_json_str.strip("\n```")
             analysis_json_str = analysis_json_str.strip()
 
             print(f"🕵️ Cleaned Initial Analysis JSON String: {analysis_json_str}")
-            analysis = json.loads(analysis_json_str)
-            query_type = analysis.get("type", "query")
-            detected_language = analysis.get("language", "en")
-            result["language"] = detected_language.strip().lower()
+            initial_analysis = json.loads(analysis_json_str)
+            detected_language = initial_analysis.get("language", "en").strip().lower()
+            translated_query = initial_analysis.get("translated_query", user_input) # Use original if translation fails
+            result["language"] = detected_language
             print(f"🔤 Detected Language: {result['language']}")
+            print(f"🌐 Translated Query: {translated_query}")
 
-            if query_type == "social":
-                result["routing"] = "social"
-                result["answer"] = analysis.get("social_response", "Hello! How can I help you?")
-                result["rewritten"] = user_input
-                result["retrieved"] = "social_response"
-                result["evaluation"] = "yes"
-                print(
-                    f"👋 Social expression detected. Language: {result['language']}. Response: {result['answer']}. Skipping further processing."
-                )
-                return result
-            else:
-                # This is a non-social expression query, proceed to tool routing
-                result["routing"] = None  # To be set by tool_router_agent
+            # Pass the translated query and detected language to the simplifier/classifier
+            user_input_for_simplifier = translated_query # Use translated query for next steps
 
         except Exception as e:
             print(
                 f"Error during initial query analysis: {str(e)}. Proceeding with defaults."
             )
             result["language"] = "en"
+            detected_language = "en" # default
+            translated_query = user_input # default
+            user_input_for_simplifier = user_input # Use original query if analysis fails
             # Assume it's not a social expression and proceed to routing if analysis fails
             query_type = "query"
 
+
+        # 2. Query Simplification and Social Classification step
+        simplified_query_data_str = ""
+        try:
+            simplifier_crew = Crew(
+                agents=[query_simplifier_agent],
+                tasks=[query_simplifier_task],
+                verbose=True,
+                process=Process.sequential,
+            )
+            simplified_output_raw = simplifier_crew.kickoff(
+                inputs={"translated_query": user_input_for_simplifier, "detected_language": detected_language}
+            )
+            simplified_query_data_str = str(simplified_output_raw).strip()
+            print(f"🔍 Simplified/Classified Query Raw Output: {simplified_query_data_str}")
+
+            if simplified_query_data_str.startswith("```json"):
+                simplified_query_data_str = simplified_query_data_str.strip("```json\n")
+                simplified_query_data_str = simplified_query_data_str.strip("\n```")
+            simplified_query_data_str = simplified_query_data_str.strip()
+            print(f"🔍 Cleaned Simplified/Classified Query JSON String: {simplified_query_data_str}")
+
+            simplified_query_data = json.loads(simplified_query_data_str)
+            query_type = simplified_query_data.get("type", "query")
+            processed_query_output = simplified_query_data.get("output", user_input_for_simplifier)
+
+            if query_type == "social":
+                result["routing"] = "social"
+                result["answer"] = processed_query_output # This is the social response in original language
+                result["rewritten"] = user_input # Original user input
+                result["retrieved"] = "social_response"
+                result["evaluation"] = "yes"
+                print(
+                    f"👋 Social expression detected by simplifier. Language: {result['language']}. Response: {result['answer']}. Skipping further processing."
+                )
+                return result
+            else:
+                # This is a non-social expression query, use the simplified output for further processing
+                user_input = processed_query_output # The simplified query
+                result["routing"] = None # To be set by tool_router_agent
+                print(f"💡 Query classified as '{query_type}'. Simplified Query: {user_input}")
+
+        except Exception as e:
+            print(
+                f"Error during query simplification/classification: {str(e)}. Using translated/original query for routing."
+            )
+            user_input = user_input_for_simplifier # Fallback to translated (or original if translation failed)
+            # Assume it's a query and proceed to routing if simplification fails
+            query_type = "query"
+
+
         # Proceed only if not a social expression that has been fully handled
         if result["routing"] != "social":
-            # 2. Query Simplification step (before routing, for better similarity matching)
-            simplified_query = user_input
-            try:
-                simplifier_crew = Crew(
-                    agents=[query_simplifier_agent],
-                    tasks=[query_simplifier_task],
-                    verbose=True,
-                    process=Process.sequential,
-                )
-                simplified_output = simplifier_crew.kickoff(
-                    inputs={"query": user_input}
-                )
-                simplified_query = str(simplified_output).strip()
-                print(f"🔍 Simplified Query: {simplified_query}")
-
-                # Use the simplified query for routing and vector search
-                if simplified_query:
-                    user_input = simplified_query
-            except Exception as e:
-                print(
-                    f"Error during query simplification: {str(e)}. Using original query."
-                )
-                # Continue with original query if simplification fails
-
             # 3. Tool Routing step (only if not a social expression)
             try:
                 routing_decision = _get_similarity_routing_decision(user_input)
@@ -572,10 +592,10 @@ vector_search_tool = search_qdrant_tool
 # Initial Query Analyzer Agent
 initial_query_analyzer_agent = Agent(
     role="Initial Query Analyzer",
-    goal="Analyze the user's query to detect its language and determine if it is a social expression (e.g., greeting, thanks, farewell). If it is a social expression, generate an appropriate social expression response in the detected language. Output the analysis as a structured JSON.",
+    goal="Detect the language of the user's query and translate the query to English. Output the analysis as a structured JSON containing the detected language code and the English translation of the query.",
     backstory=(
-        """Expert in multilingual linguistic analysis, capable of identifying social expression in various languages,
-    generating contextually appropriate social expression responses, and discerning the primary language of any text.
+        """Expert in multilingual linguistic analysis, capable of identifying the primary language of any text
+    and accurately translating it into English.
     Provides clear, structured output for downstream processing."""
     ),
     llm=crewai_llm,
@@ -637,11 +657,12 @@ evaluator_agent = Agent(
 
 # Query Simplifier Agent
 query_simplifier_agent = Agent(
-    role="Query Simplifier",
-    goal="Extract the core question or main keywords from the user's query, removing social expressions (like 'hello', 'thanks', 'farewell'), politeness phrases, and conversational filler. Focus on the essential topic.",
+    role="Query Simplifier and Classifier",
+    goal="Simplify the query, remove conversational filler, and classify it as either a 'query' (for information retrieval) or a 'social' expression. If 'social', generate an appropriate response.",
     backstory=(
         """Expert in natural language understanding, specialized in identifying the core intent
-    of a user's query. Can distill complex sentences into their essential components for effective information retrieval."""
+    of a user's query. Can distill complex sentences into their essential components.
+    Also adept at recognizing social cues and generating appropriate social responses in various languages."""
     ),
     llm=crewai_llm,
     allow_delegation=False,
@@ -656,34 +677,23 @@ query_simplifier_agent = Agent(
 initial_query_analysis_task = Task(
     description=(
         """Analyze the user's EXACT query: "{query}"
-    Your primary goal is to determine the language and type of the query.
-
+    Your primary goals are to:
     1.  **Language Detection**: Determine the primary language of the query. Return it as a two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es'). If unsure, default to 'en'.
-    2.  **Query Type Classification**:
-        *   If the ENTIRE query is SOLELY a social expression (e.g., "greetings", "thanks", "farewell") and contains NO other question or command, classify it as "social".
-        *   If the query starts with a social expression but is IMMEDIATELY followed by a question or a specific topic (e.g., "Thanks, who is John Doe?", "Hi, tell me about John Doe?"), classify it as "query". The social expression part should be noted for language detection but the overall type is "query".
-        *   If the query does not contain a social expression or is a statement/question, classify it as "query".
+    2.  **Query Translation**: Translate the original query into English.
 
-    3.  **Social Expression Response Generation (ONLY if type is "social")**:
-        *   If AND ONLY IF the query type is classified as "social" (meaning it's *just* a social expression), generate a concise and natural-sounding social expression response in the DETECTED language.
-        *   The response should be friendly and offer assistance. Examples:
-            -   English: "Hello! How can I help you today?"
-            -   Turkish: "Başka yardımcı olabileceğim bir konu var mı?"
-            -   Spanish: "¡Adiós! Si tienes cualquier otra duda, no dudes en preguntar."
+    Respond with ONLY a JSON string in the following format:
+    {{"language": "language_code", "translated_query": "The query translated into English."}}
 
-    Respond with ONLY a JSON string in ONE of the following formats:
-    -   If it IS SOLELY a social expression: {{"type": "social", "language": "language_code", "social_response": "Generated social expression in the detected language."}}
-        (e.g., for "Hello": {{"type": "social", "language": "en", "social_response": "Hello! How can I help you?"}})
-    -   If it IS a question/statement (even if it starts with a social expression): {{"type": "query", "language": "language_code"}}
-        (e.g., for "Hi, who is John Doe?": {{"type": "query", "language": "en"}})
-        (e.g., for "Who is John Doe?": {{"type": "query", "language": "en"}})
+    Examples:
+    -   For query "Merhaba dünya": {{"language": "tr", "translated_query": "Hello world"}}
+    -   For query "Hola Mundo": {{"language": "es", "translated_query": "Hello World"}}
+    -   For query "Hello world": {{"language": "en", "translated_query": "Hello world"}}
 
     CRITICAL: Your output MUST be ONLY the JSON object and NOTHING else. DO NOT include any explanations, notes, or additional text before or after the JSON.
-    DO NOT include any other text or explanation.
-    Focus on distinguishing between pure social expressions and social expressions followed by actual queries."""
+    Focus on accurate language detection and translation."""
     ),
     expected_output=(
-        'ONLY a valid JSON string without any other text. Example for a PURE social expression: {{"type": "social", "language": "en", "social_response": "Hello! How can I assist you?"}}. Example for a query (even if it starts with a social expression): {{"type": "query", "language": "es"}}'
+        'ONLY a valid JSON string without any other text. Example: {{"language": "tr", "translated_query": "What is the weather like today?"}}'
     ),
     agent=initial_query_analyzer_agent,
 )
@@ -691,27 +701,36 @@ initial_query_analysis_task = Task(
 
 # Task for Query Simplifier Agent
 query_simplifier_task = Task(
-    description=(
-        """Analyze the user's EXACT query: "{query}"
-    Your goal is to simplify this query for vector database search.
-    1. Identify the main topic or question.
-    2. Remove any social expressions (like 'greetings', 'thanks', 'farewell').
-    3. Remove any politeness phrases (like 'please', 'can you tell me?', 'I would like to know').
-    4. Remove conversational filler or introductory phrases.
-    5. Extract the core keywords or reformulate it as a concise question or statement focusing *only* on the essential information needed.
-    Examples:
-        - "Hi, can you tell me about the educational background of John Doe?" -> "John Doe educational background"
-        - "Thanks, who is John Doe?" -> "John Doe"
-        - "Who is John Doe?" -> "John Doe"
-        - "What is the population of London?" -> "population of London"
-        - "Tell me the current weather forecast" -> "current weather forecast"
+    description="""Analyze the query: "{translated_query}"
+    
+    Your goals are:
+    1.  **Simplify the Query**:
+        *   Identify the main topic or question.
+        *   Remove any social expressions (like 'greetings', 'thanks', 'farewell') if they are not the SOLE content.
+        *   Remove any politeness phrases (like 'please', 'can you tell me?', 'I would like to know').
+        *   Remove conversational filler or introductory phrases.
+        *   Extract the core keywords or reformulate it as a concise question or statement focusing *only* on the essential information needed.
 
-    Respond ONLY with the simplified query string. DO NOT include any other text, explanation, or labels."""
-    ),
-    expected_output=(
-        "A concise string representing the core topic or question of the original query. Example: 'John Doe educational background'"
-    ),
-    agent=query_simplifier_agent,
+    2.  **Classify the Simplified Query's Intent**:
+        *   If the simplified query represents a request for information, data, or an answer to a question, classify its type as "query".
+        *   If the *original user intention* (even after simplification) was PURELY a social expression (e.g., "hello", "thank you", "bye"), classify its type as "social".
+
+    3.  **Generate Output based on Classification**:
+        *   If type is "query": Respond with a JSON: {{"type": "query", "output": "simplified_query_string"}}
+            -   Example for "John Doe educational background": {{"type": "query", "output": "John Doe educational background"}}
+        *   If type is "social": Generate a polite and contextually appropriate social response.
+            -   If the user expresses gratitude (e.g., "thanks"), respond with an acknowledgment and offer further assistance (e.g., "You're welcome! Is there anything else I can help with?").
+            -   If the user offers a greeting (e.g., "hello", "merhaba"), respond with a greeting and offer assistance (e.g., "Hello! How can I help you?").
+            -   If the user says farewell (e.g., "bye", "hoşçakal"), respond with a polite farewell (e.g., "Goodbye! Have a great day!").
+            Then respond with a JSON: {{"type": "social", "output": "Generated social response"}}
+            -   Example for greeting: {{"type": "social", "output": "Hello! How can I help you?"}}
+            -   Example for gratitude: {{"type": "social", "output": "You're welcome! Is there anything else I can help with?"}}
+
+    CRITICAL: Your output MUST be ONLY the JSON object and NOTHING else.
+    DO NOT include any explanations, notes, or additional text before or after the JSON.
+    For "social" type, the "output" field MUST contain the social response in the DETECTED LANGUAGE. Two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es') format DETECTED LANGUAGE: '{detected_language}'""",
+    expected_output="A JSON object. Example for a query: {{\"type\": \"query\", \"output\": \"John Doe educational background\"}}. Example for a social expression (original language was Turkish (tr)): {{\"type\": \"social\", \"output\": \"Rica ederim! Başka bir şey var mı?\"}}",
+    agent=query_simplifier_agent
 )
 
 
@@ -819,7 +838,7 @@ INSTRUCTIONS:
 6. NEVER extrapolate or guess missing information.
 7. NEVER use conversational prefixes like "Query:", "Answer:", "Here is the answer:", "I will answer this question:" etc. in your response. ONLY provide the answer itself.
 8. ALWAYS refer to the person being asked about in the third person (e.g., "He/She is...", "Their education is..."). NEVER use the first person ("I", "my") when talking about the person's details.
-9. Respond in the SAME LANGUAGE as the user's query: the detected language is {detected_lang}."""
+9. Respond in the DETECTED LANGUAGE as the user's query. Two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es') format DETECTED LANGUAGE: '{detected_lang}'."""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -833,6 +852,8 @@ INSTRUCTIONS:
             messages=messages,
             stream=True,
         )
+
+        print(f"🔤 Final Message: {messages}")
 
         full_text = ""
         for chunk in response:
