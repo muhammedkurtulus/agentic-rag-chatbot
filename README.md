@@ -55,8 +55,8 @@ pip install -r requirements.txt
 - Add the necessary API keys and URLs to this file:
   ```dotenv
   QDRANT_URL="YOUR_QDRANT_INSTANCE_URL"
-  QDRANT_API_KEY="YOUR_QDRANT_API_KEY" # Optional, depends on your Qdrant setup
-  TAVILY_API_KEY="YOUR_TAVILY_API_KEY" # Required for web search
+  QDRANT_API_KEY="YOUR_QDRANT_API_KEY"
+  TAVILY_API_KEY="YOUR_TAVILY_API_KEY"
   OLLAMA_BASE_URL="http://localhost:11434" # This is usually the default
   ```
 - Replace the placeholder values with your actual credentials.

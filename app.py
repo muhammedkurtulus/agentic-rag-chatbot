@@ -78,7 +78,7 @@ with st.sidebar:
     else:
         st.sidebar.warning("❗No active collection has been selected yet.")
 
-    # Upload Pdf Files And İndex Them Into Qdrant As Vector Chunks
+    # Upload Pdf Files And Index Them Into Qdrant As Vector Chunks
     st.title("📎 PDF Upload and Indexing")
     uploaded_pdfs = st.file_uploader(
         "Upload your PDF files", type=["pdf"], accept_multiple_files=True

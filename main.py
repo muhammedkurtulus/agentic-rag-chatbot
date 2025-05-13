@@ -116,7 +116,7 @@ def process_query(user_input):
         "evaluation": None,
         "answer": None,
         "error": None,
-        "language": "en",  # Default language
+        "language": "en",
     }
 
     try:
@@ -129,14 +129,14 @@ def process_query(user_input):
                 process=Process.sequential,
             )
             analysis_output = analyzer_crew.kickoff(inputs={"query": user_input})
-            analysis_json_str = str(analysis_output)  # Ensure it's a string
+            analysis_json_str = str(analysis_output)
             print(f"🕵️ Initial Analysis Raw Output: {analysis_json_str}")
 
             # Attempt to strip any markdown or extra formatting if present
             if analysis_json_str.startswith("```json"):
                 analysis_json_str = analysis_json_str.strip("```json\n")
                 analysis_json_str = analysis_json_str.strip("\n```")
-            analysis_json_str = analysis_json_str.strip()  # General stripping
+            analysis_json_str = analysis_json_str.strip()
 
             print(f"🕵️ Cleaned Initial Analysis JSON String: {analysis_json_str}")
             analysis = json.loads(analysis_json_str)
@@ -147,16 +147,13 @@ def process_query(user_input):
 
             if query_type == "greeting":
                 result["routing"] = "greeting"
-                result["rewritten"] = user_input  # No rewrite for greetings
+                result["rewritten"] = user_input
                 result["retrieved"] = "greeting_response"
-                result["evaluation"] = (
-                    "yes"  # Greetings are always useful for a response
-                )
+                result["evaluation"] = "yes"
                 print(
                     f"👋 Greeting detected. Language: {result['language']}. Skipping further processing."
                 )
-                # The stream_answer_from_ollama function will handle generating the greeting message.
-                # No need to return early, let the main flow continue to stream_answer_from_ollama.
+
             else:
                 # This is a non-greeting query, proceed to tool routing
                 result["routing"] = None  # To be set by tool_router_agent
@@ -180,20 +177,23 @@ def process_query(user_input):
                     verbose=True,
                     process=Process.sequential,
                 )
-                simplified_output = simplifier_crew.kickoff(inputs={"query": user_input})
+                simplified_output = simplifier_crew.kickoff(
+                    inputs={"query": user_input}
+                )
                 simplified_query = str(simplified_output).strip()
                 print(f"🔍 Simplified Query: {simplified_query}")
-                
+
                 # Use the simplified query for routing and vector search
                 if simplified_query:
                     user_input = simplified_query
             except Exception as e:
-                print(f"Error during query simplification: {str(e)}. Using original query.")
+                print(
+                    f"Error during query simplification: {str(e)}. Using original query."
+                )
                 # Continue with original query if simplification fails
 
             # 3. Tool Routing step (only if not a greeting)
             try:
-                # Call the undecorated Python function directly
                 routing_decision = _get_similarity_routing_decision(user_input)
                 result["routing"] = (
                     routing_decision.strip().lower()
@@ -242,6 +242,26 @@ def process_query(user_input):
         print(f"Error in process_query: {str(e)}")
         result["error"] = str(e)
         return result
+
+
+def _get_similarity_routing_decision(query: str) -> str:
+    """Calculates similarity for the query using get_similarity_score.
+    If score > 0.40, returns 'vector_store'.
+    Else (score <= 0.40 or error), returns 'combined_search'."""
+    score_val = 0.0  # Default score for logging in case of early error
+    decision = "combined_search"  # Default decision
+    try:
+        score_val = get_similarity_score(query)  # existing function
+        if score_val > 0.40:
+            decision = "vector_store"
+        # else decision remains "combined_search"
+    except Exception as e:
+        print(
+            f"Error in _get_similarity_routing_decision: {e}. Defaulting to combined_search."
+        )
+        # decision is already "combined_search"
+    print(f"Similarity Based Routing Logic: score={score_val}, decision='{decision}'")
+    return decision
 
 
 def rewrite_query(query, routing):
@@ -303,7 +323,6 @@ def get_vector_search_results(query):
         text = hit.payload["text"]
         text = text.replace("\n\n", " ").replace("\n", " ")
         relevant_chunks.append(f"Chunk {i+1}: {text}")
-        print(f"📄 Retrieved Chunk {i+1}: {text[:100]}...")
 
     retrieved = "\n\n".join(relevant_chunks)
     return retrieved
@@ -530,33 +549,6 @@ def search_qdrant_tool(query: str) -> str:
         return "No relevant information found."
     return result
 
-
-web_search_tool = TavilySearchTool()
-# retrieve_highest_similarity_tool = retrieve_highest_similarity
-vector_search_tool = search_qdrant_tool
-
-
-# Undecorated Python function for routing logic
-def _get_similarity_routing_decision(query: str) -> str:
-    """Calculates similarity for the query using get_similarity_score.
-    If score > 0.40, returns 'vector_store'.
-    Else (score <= 0.40 or error), returns 'combined_search'."""
-    score_val = 0.0  # Default score for logging in case of early error
-    decision = "combined_search"  # Default decision
-    try:
-        score_val = get_similarity_score(query)  # existing function
-        if score_val > 0.40:
-            decision = "vector_store"
-        # else decision remains "combined_search"
-    except Exception as e:
-        print(
-            f"Error in _get_similarity_routing_decision: {e}. Defaulting to combined_search."
-        )
-        # decision is already "combined_search"
-    print(f"Similarity Based Routing Logic: score={score_val}, decision='{decision}'")
-    return decision
-
-
 # Decorated tool (currently not used by an agent but defined for potential future use)
 # @tool("Similarity Based Router Tool")
 # def similarity_based_router_tool_for_agent(query: str) -> str:
@@ -564,6 +556,12 @@ def _get_similarity_routing_decision(query: str) -> str:
 #     Calculates similarity for the query and returns 'vector_store' or 'combined_search'.
 #     """
 #     return _get_similarity_routing_decision(query)
+
+
+web_search_tool = TavilySearchTool()
+# retrieve_highest_similarity_tool = retrieve_highest_similarity
+vector_search_tool = search_qdrant_tool
+
 
 
 # ----------------------------------------
@@ -669,7 +667,6 @@ initial_query_analysis_task = Task(
         'A JSON string. Example for greeting: {{"type": "greeting", "language": "en"}}. Example for non-greeting: {{"type": "query", "language": "es"}}'
     ),
     agent=initial_query_analyzer_agent,
-    # No tools needed for this agent, relies on LLM's inherent understanding
 )
 
 
