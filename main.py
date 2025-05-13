@@ -134,8 +134,8 @@ def process_query(user_input):
 
             # Attempt to strip any markdown or extra formatting if present
             if analysis_json_str.startswith("```json"):
-                analysis_json_str = analysis_json_str.strip("```json\n")
-                analysis_json_str = analysis_json_str.strip("\n```")
+                analysis_json_str = analysis_json_str.strip("```json\\n")
+                analysis_json_str = analysis_json_str.strip("\\n```")
             analysis_json_str = analysis_json_str.strip()
 
             print(f"🕵️ Cleaned Initial Analysis JSON String: {analysis_json_str}")
@@ -147,13 +147,14 @@ def process_query(user_input):
 
             if query_type == "greeting":
                 result["routing"] = "greeting"
+                result["answer"] = analysis.get("greeting_response", "Hello! How can I help you?")
                 result["rewritten"] = user_input
                 result["retrieved"] = "greeting_response"
                 result["evaluation"] = "yes"
                 print(
-                    f"👋 Greeting detected. Language: {result['language']}. Skipping further processing."
+                    f"👋 Greeting detected. Language: {result['language']}. Response: {result['answer']}. Skipping further processing."
                 )
-
+                return result
             else:
                 # This is a non-greeting query, proceed to tool routing
                 result["routing"] = None  # To be set by tool_router_agent
@@ -220,7 +221,6 @@ def process_query(user_input):
                 result["retrieved"] = retrieve_information(
                     result["rewritten"], result["routing"]
                 )
-                print(f"📦 Retrieved Result: {result['retrieved'][:200]}...")
             except Exception as e:
                 print(f"Error during retrieval: {str(e)}")
                 result["retrieved"] = (
@@ -323,6 +323,7 @@ def get_vector_search_results(query):
         text = hit.payload["text"]
         text = text.replace("\n\n", " ").replace("\n", " ")
         relevant_chunks.append(f"Chunk {i+1}: {text}")
+        print(f"📄 Retrieved Chunk {i+1}: {text[:100]}...")
 
     retrieved = "\n\n".join(relevant_chunks)
     return retrieved
@@ -571,10 +572,11 @@ vector_search_tool = search_qdrant_tool
 # Initial Query Analyzer Agent
 initial_query_analyzer_agent = Agent(
     role="Initial Query Analyzer",
-    goal="Analyze the user's query to detect its language and determine if it is a greeting. Output the analysis as a structured JSON.",
+    goal="Analyze the user's query to detect its language and determine if it is a greeting. If it is a greeting, generate an appropriate greeting response in the detected language. Output the analysis as a structured JSON.",
     backstory=(
-        """Expert in multilingual linguistic analysis, capable of identifying greetings in various languages
-    and discerning the primary language of any text. Provides clear, structured output for downstream processing."""
+        """Expert in multilingual linguistic analysis, capable of identifying greetings in various languages,
+    generating contextually appropriate greeting responses, and discerning the primary language of any text.
+    Provides clear, structured output for downstream processing."""
     ),
     llm=crewai_llm,
     allow_delegation=False,
@@ -654,17 +656,33 @@ query_simplifier_agent = Agent(
 initial_query_analysis_task = Task(
     description=(
         """Analyze the user's EXACT query: "{query}"
-    1. Determine the primary language of the query. Return it as a two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es'). If unsure, default to 'en'.
-    2. Determine if the query is a greeting (e.g., "hello", "merhaba", "hola", "hi").
-    
+    Your primary goal is to determine the language and type of the query.
+
+    1.  **Language Detection**: Determine the primary language of the query. Return it as a two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es'). If unsure, default to 'en'.
+    2.  **Query Type Classification**:
+        *   If the ENTIRE query is SOLELY a greeting (e.g., "hello", "hi", "hey") and contains NO other question or command, classify it as "greeting".
+        *   If the query starts with a greeting but is IMMEDIATELY followed by a question or a specific topic (e.g., "Hello, what is the weather?", "Hi, tell me about John Doe?"), classify it as "query". The greeting part should be noted for language detection but the overall type is "query".
+        *   If the query does not contain a greeting or is a statement/question, classify it as "query".
+
+    3.  **Greeting Response Generation (ONLY if type is "greeting")**:
+        *   If AND ONLY IF the query type is classified as "greeting" (meaning it's *just* a greeting), generate a concise and natural-sounding greeting response in the DETECTED language.
+        *   The response should be friendly and offer assistance. Examples:
+            -   English: "Hello! How can I help you today?"
+            -   Turkish: "Merhaba! Size nasıl yardımcı olabilirim?"
+            -   Spanish: "¡Hola! ¿En qué puedo ayudarte?"
+
     Respond with ONLY a JSON string in ONE of the following formats:
-    - If it IS a greeting: {{"type": "greeting", "language": "language_code"}} (e.g., {{"type": "greeting", "language": "tr"}})
-    - If it IS NOT a greeting: {{"type": "query", "language": "language_code"}} (e.g., {{"type": "query", "language": "en"}})
-    
-    DO NOT include any other text or explanation."""
+    -   If it IS SOLELY a greeting: {{"type": "greeting", "language": "language_code", "greeting_response": "Generated greeting in the detected language."}}
+        (e.g., for "Hello": {{"type": "greeting", "language": "en", "greeting_response": "Hello! How can I help you?"}})
+    -   If it IS a question/statement (even if it starts with a greeting): {{"type": "query", "language": "language_code"}}
+        (e.g., for "Hi, what's up?": {{"type": "query", "language": "en"}})
+        (e.g., for "What is the weather in London?": {{"type": "query", "language": "en"}})
+
+    DO NOT include any other text or explanation.
+    Focus on distinguishing between pure greetings and greetings followed by actual queries."""
     ),
     expected_output=(
-        'A JSON string. Example for greeting: {{"type": "greeting", "language": "en"}}. Example for non-greeting: {{"type": "query", "language": "es"}}'
+        'A JSON string. Example for a PURE greeting: {{"type": "greeting", "language": "en", "greeting_response": "Hello! How can I assist you?"}}. Example for a query (even if it starts with a greeting): {{"type": "query", "language": "es"}}'
     ),
     agent=initial_query_analyzer_agent,
 )
@@ -760,39 +778,11 @@ evaluator_task = Task(
 # 🧠 LLM
 # ----------------------------------------
 def stream_answer_from_ollama(rewritten, retrieved, evaluation, language="en"):
-    # Handle greeting case
     if retrieved == "greeting_response":
-        # Use different greetings based on detected language
-        greetings = {
-            "en": [
-                "Hello! How can I help you?",
-                "Hi there! How can I assist you today?",
-                "Greetings! Feel free to ask me any question.",
-                "Hello! You can ask me anything.",
-            ],
-            "tr": [
-                "Merhaba! Size nasıl yardımcı olabilirim?",
-                "Selam! Bugün size nasıl yardımcı olabilirim?",
-                "Merhaba! Bana istediğiniz soruyu sorabilirsiniz.",
-                "Selam! Bana herhangi bir konuda soru sorabilirsiniz.",
-            ],
-            # Add more languages as needed
-            "default": [
-                "Hello! How can I help you?",
-                "Hi there! How can I assist you today?",
-            ],
-        }
-
-        # Use language from the router agent
-        print(f"🔤 Using Language for Greeting: {language}")
-        if language in greetings:
-            greeting_response = random.choice(greetings[language])
-        else:
-            greeting_response = random.choice(greetings["default"])
-
-        # Return the greeting without streaming
-        yield greeting_response
-        return greeting_response
+        print(f"ℹ️ stream_answer_from_ollama called with retrieved='greeting_response', but an answer should have been provided by initial_query_analyzer. Using a generic fallback if no answer found in 'rewritten'.")
+        fallback_greeting = "Hello! How can I help you?"
+        yield fallback_greeting
+        return
 
     # Always treat partial information as useful
     if evaluation not in ["yes", "no"]:
