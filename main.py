@@ -822,23 +822,24 @@ Retrieved Information:
 Evaluation: {evaluation}
 
 This is a biographical query system. Follow these guidelines:
-1. For "who is" questions: ONLY give a very brief answer (1-2 sentences) about profession
-2. For SPECIFIC questions: FOCUS ONLY on that specific information requested in the query
-3. If the specific information is not found, clearly state that this information is not available
+1. For "who is" or general identity questions: Provide a very brief answer (1-2 sentences) about profession/title, UNLESS the query asks for specific details like references, education, contact, etc.
+2. For SPECIFIC questions (e.g., asking for references, education, contact details): FOCUS EXCLUSIVELY on that specific information requested in the query. If the information is present in the retrieved data, provide it fully.
+3. If the specific information is not found, clearly state that this information is not available.
 """
 
     system_prompt = f"""You are an AI assistant answering user queries based on provided information.
 
 INSTRUCTIONS:
 1. ONLY use information from the retrieved data.
-2. For "who is" questions: provide ONLY a SHORT answer with profession/title (1-2 sentences).
-3. For SPECIFIC questions: FOCUS EXCLUSIVELY on answering that specific question with ONLY relevant details.
-4. Each specific question type should get a targeted, relevant answer about ONLY what was asked.
-5. If specific information is not in the data, state that this information is not available.
-6. NEVER extrapolate or guess missing information.
-7. NEVER use conversational prefixes like "Query:", "Answer:", "Here is the answer:", "I will answer this question:" etc. in your response. ONLY provide the answer itself.
-8. ALWAYS refer to the person being asked about in the third person (e.g., "He/She is...", "Their education is..."). NEVER use the first person ("I", "my") when talking about the person's details.
-9. Respond in the DETECTED LANGUAGE as the user's query. Two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es') format DETECTED LANGUAGE: '{detected_lang}'."""
+2. For "who is" or general identity questions: provide ONLY a SHORT answer with profession/title (1-2 sentences), UNLESS the query explicitly asks for more details like references, education, etc.
+3. If the query asks for SPECIFIC details like "references", "education", "contact", "experience", etc., and this information is present in the "Retrieved Information", you MUST provide these specific details from the retrieved text.
+4. For SPECIFIC questions: FOCUS EXCLUSIVELY on answering that specific question with ONLY relevant details from the retrieved data.
+5. Each specific question type should get a targeted, relevant answer about ONLY what was asked.
+6. If specific information is not in the data, state that this information is not available.
+7. NEVER extrapolate or guess missing information.
+8. NEVER use conversational prefixes like "Query:", "Answer:", "Here is the answer:", "I will answer this question:" etc. in your response. ONLY provide the answer itself.
+9. ALWAYS refer to the person being asked about in the third person (e.g., "He/She is...", "Their education is...", "References for him/her include..."). NEVER use the first person ("I", "my") when talking about the person's details.
+10. Respond in the DETECTED LANGUAGE as the user's query. Two-letter ISO 639-1 code (e.g., 'en', 'tr', 'es') format DETECTED LANGUAGE: '{detected_lang}'."""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -853,7 +854,11 @@ INSTRUCTIONS:
             stream=True,
         )
 
-        print(f"🔤 Final Message: {messages}")
+        print("🔤 Final Message:")
+        for message in messages:
+            print(f"  Role: {message['role']}")
+            print(f"  Content:\\n{message['content']}")
+            print("-" * 20)
 
         full_text = ""
         for chunk in response:
